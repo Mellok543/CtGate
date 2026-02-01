@@ -27,9 +27,15 @@ public class CtGateConfig : BasePluginConfig
 {
     [JsonPropertyName("ChatPrefix")] public string ChatPrefix { get; set; } = "[CT Gate]";
 
-    [JsonPropertyName("MySqlConnectionString")]
-    public string MySqlConnectionString { get; set; } =
-        "Server=localhost;Port=3306;Database=ctgate;Uid=root;Pwd=changeme;";
+    [JsonPropertyName("Host")] public string Host { get; set; } = "localhost";
+
+    [JsonPropertyName("Database")] public string Database { get; set; } = "ctgate";
+
+    [JsonPropertyName("User")] public string User { get; set; } = "root";
+
+    [JsonPropertyName("Password")] public string Password { get; set; } = "changeme";
+
+    [JsonPropertyName("Port")] public string Port { get; set; } = "3306";
 
     [JsonPropertyName("CtPerT")] public int CtPerT { get; set; } = 3;
 
@@ -40,6 +46,8 @@ public class CtGateConfig : BasePluginConfig
 
     [JsonPropertyName("QueueCheckIntervalSeconds")]
     public int QueueCheckIntervalSeconds { get; set; } = 5;
+
+    [JsonPropertyName("AllowSpectators")] public bool AllowSpectators { get; set; } = true;
 
     [JsonPropertyName("Questions")] public List<CtGateQuestionConfig> Questions { get; set; } = new()
     {
@@ -145,6 +153,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
         RegisterListener<Listeners.OnClientDisconnect>(OnClientDisconnectHandler);
 
         AddCommand("css_ct", "Запуск теста на вступление в КТ", OnCtCommand);
+        AddCommand("ct", "Запуск теста на вступление в КТ", OnCtCommand);
 
         AddTimer(Config.QueueCheckIntervalSeconds, ProcessQueue, TimerFlags.REPEAT);
 
@@ -155,6 +164,11 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
     {
         var player = Utilities.GetPlayerFromSlot(slot);
         if (player == null || !player.IsValid || player.IsBot)
+        {
+            return;
+        }
+
+        if (Config.AllowSpectators && player.Team == CsTeam.Spectator)
         {
             return;
         }
@@ -465,7 +479,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
 
     private async Task EnsureDatabaseAsync()
     {
-        await using var connection = new MySqlConnection(Config.MySqlConnectionString);
+        await using var connection = new MySqlConnection(BuildConnectionString());
         await connection.OpenAsync();
 
         await connection.ExecuteAsync(@"
@@ -481,7 +495,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
 
     private async Task EnsurePlayerRowAsync(ulong steamId)
     {
-        await using var connection = new MySqlConnection(Config.MySqlConnectionString);
+        await using var connection = new MySqlConnection(BuildConnectionString());
         await connection.OpenAsync();
 
         await connection.ExecuteAsync(@"
@@ -493,7 +507,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
 
     private async Task<CtGateBlockInfo> GetBlockInfoAsync(ulong steamId)
     {
-        await using var connection = new MySqlConnection(Config.MySqlConnectionString);
+        await using var connection = new MySqlConnection(BuildConnectionString());
         await connection.OpenAsync();
 
         var result = await connection.QueryFirstOrDefaultAsync<CtGateBlockInfoRow>(@"
@@ -513,7 +527,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
 
     private async Task SetBlockAsync(ulong steamId, DateTime blockedUntil, string reason)
     {
-        await using var connection = new MySqlConnection(Config.MySqlConnectionString);
+        await using var connection = new MySqlConnection(BuildConnectionString());
         await connection.OpenAsync();
 
         await connection.ExecuteAsync(@"
@@ -528,5 +542,19 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
                 BlockedUntil = blockedUntil,
                 Reason = reason
             });
+    }
+
+    private string BuildConnectionString()
+    {
+        var builder = new MySqlConnectionStringBuilder
+        {
+            Server = Config.Host,
+            Database = Config.Database,
+            UserID = Config.User,
+            Password = Config.Password,
+            Port = uint.TryParse(Config.Port, out var port) ? port : 3306
+        };
+
+        return builder.ConnectionString;
     }
 }
