@@ -243,6 +243,19 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
             return HookResult.Continue;
         }
 
+        if (team == (int)CsTeam.Terrorist || team == (int)CsTeam.Spectator)
+        {
+            _sessions.Remove(player.SteamID);
+            _pendingTransfers.Remove(player.SteamID);
+            if (_ctQueueSet.Remove(player.SteamID))
+            {
+                RebuildQueueWithout(player.SteamID);
+            }
+
+            player.SwitchTeam((CsTeam)team);
+            return HookResult.Handled;
+        }
+
         if (team != (int)CsTeam.CounterTerrorist)
         {
             return HookResult.Continue;
