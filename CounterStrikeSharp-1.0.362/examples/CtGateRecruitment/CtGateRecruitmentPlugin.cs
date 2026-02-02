@@ -196,6 +196,11 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
             return;
         }
 
+        if (player.Team == CsTeam.Spectator)
+        {
+            return;
+        }
+
         if (player.Team != CsTeam.Terrorist)
         {
             player.SwitchTeam(CsTeam.Terrorist);
