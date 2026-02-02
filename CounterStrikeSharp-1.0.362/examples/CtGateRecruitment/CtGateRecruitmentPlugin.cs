@@ -152,9 +152,6 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
         RegisterListener<Listeners.OnClientPutInServer>(OnClientPutInServerHandler);
         RegisterListener<Listeners.OnClientDisconnect>(OnClientDisconnectHandler);
 
-        AddCommand("css_ct", "Запуск теста на вступление в КТ", OnCtCommand);
-        AddCommand("ct", "Запуск теста на вступление в КТ", OnCtCommand);
-
         AddTimer(Config.QueueCheckIntervalSeconds, ProcessQueue, TimerFlags.REPEAT);
 
         Task.Run(EnsureDatabaseAsync);
@@ -199,7 +196,8 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
         }
     }
 
-    private void OnCtCommand(CCSPlayerController? player, CommandInfo commandInfo)
+    [ConsoleCommand("css_ct", "Запуск теста на вступление в КТ")]
+    public void OnCtCommand(CCSPlayerController? player, CommandInfo commandInfo)
     {
         if (player == null || !player.IsValid)
         {
