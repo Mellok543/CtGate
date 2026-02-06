@@ -47,6 +47,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
     private readonly Queue<ulong> _ctQueue = new();
     private readonly HashSet<ulong> _ctQueueSet = new();
     private readonly HashSet<ulong> _pendingTransfers = new();
+    private readonly Dictionary<ulong, CsTeam> _pendingTeamSwitches = new();
     private readonly CtGateBalanceService _balanceService = new();
 
     public void OnConfigParsed(CtGateConfig config)
@@ -100,7 +101,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
 
         if (player.Team != CsTeam.Terrorist)
         {
-            player.SwitchTeam(CsTeam.Terrorist);
+            QueueTeamSwitch(player, CsTeam.Terrorist);
         }
 
         Task.Run(() => EnsurePlayerRowAsync(player.SteamID));
@@ -117,6 +118,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
         var steamId = player.SteamID;
         _sessions.Remove(steamId);
         _pendingTransfers.Remove(steamId);
+        _pendingTeamSwitches.Remove(steamId);
         if (_ctQueueSet.Remove(steamId))
         {
             RebuildQueueWithout(steamId);
@@ -144,12 +146,20 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
         {
             _sessions.Remove(player.SteamID);
             _pendingTransfers.Remove(player.SteamID);
+            _pendingTeamSwitches.Remove(player.SteamID);
             if (_ctQueueSet.Remove(player.SteamID))
             {
                 RebuildQueueWithout(player.SteamID);
             }
 
-            player.SwitchTeam((CsTeam)team);
+            if (team == (int)CsTeam.Spectator)
+            {
+                player.SwitchTeam(CsTeam.Spectator);
+            }
+            else
+            {
+                QueueTeamSwitch(player, CsTeam.Terrorist);
+            }
             return HookResult.Handled;
         }
 
@@ -332,7 +342,7 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
 
         if (IsCtSlotAvailable())
         {
-            MovePlayerToCt(player);
+            QueueTeamSwitch(player, CsTeam.CounterTerrorist);
             return;
         }
 
@@ -408,17 +418,41 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
                     return;
                 }
 
-                MovePlayerToCt(queuedPlayer);
+                QueueTeamSwitch(queuedPlayer, CsTeam.CounterTerrorist);
             });
 
             return;
         }
     }
 
-    private void MovePlayerToCt(CCSPlayerController player)
+    private void QueueTeamSwitch(CCSPlayerController player, CsTeam targetTeam)
     {
-        player.SwitchTeam(CsTeam.CounterTerrorist);
-        player.PrintToChat($"{Config.ChatPrefix} Вы переведены в КТ.");
+        if (!player.IsValid)
+        {
+            return;
+        }
+
+        _pendingTeamSwitches[player.SteamID] = targetTeam;
+        if (targetTeam == CsTeam.CounterTerrorist)
+        {
+            if (_ctQueueSet.Remove(player.SteamID))
+            {
+                RebuildQueueWithout(player.SteamID);
+            }
+        }
+    }
+
+    private void ApplyTeamSwitch(CCSPlayerController player, CsTeam targetTeam)
+    {
+        player.SwitchTeam(targetTeam);
+        if (targetTeam == CsTeam.CounterTerrorist)
+        {
+            player.PrintToChat($"{Config.ChatPrefix} Вы переведены в КТ.");
+        }
+        else if (targetTeam == CsTeam.Terrorist)
+        {
+            player.PrintToChat($"{Config.ChatPrefix} Вы переведены за Т.");
+        }
 
         if (_ctQueueSet.Remove(player.SteamID))
         {
@@ -429,6 +463,63 @@ public class CtGateRecruitmentPlugin : BasePlugin, IPluginConfig<CtGateConfig>
     private bool IsCtSlotAvailable()
     {
         return _balanceService.IsCtSlotAvailable(Utilities.GetPlayers(), Config.CtPerT);
+    }
+
+    private void ProcessPendingTeamSwitches()
+    {
+        if (_pendingTeamSwitches.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in _pendingTeamSwitches.ToList())
+        {
+            var steamId = entry.Key;
+            var targetTeam = entry.Value;
+            var player = Utilities.GetPlayerFromSteamId64(steamId);
+            if (player == null || !player.IsValid)
+            {
+                _pendingTeamSwitches.Remove(steamId);
+                continue;
+            }
+
+            if (targetTeam == CsTeam.CounterTerrorist && !IsCtSlotAvailable())
+            {
+                EnqueueForCt(player);
+                _pendingTeamSwitches.Remove(steamId);
+                continue;
+            }
+
+            ApplyTeamSwitch(player, targetTeam);
+            _pendingTeamSwitches.Remove(steamId);
+        }
+    }
+
+    private void EnforceCtBalanceAtRoundEnd()
+    {
+        var players = Utilities.GetPlayers().Where(p => p is { IsValid: true, IsBot: false }).ToList();
+        var tCount = players.Count(p => p.Team == CsTeam.Terrorist);
+        var ctPlayers = players.Where(p => p.Team == CsTeam.CounterTerrorist).ToList();
+
+        var allowedCt = tCount * Config.CtPerT;
+        if (ctPlayers.Count <= allowedCt)
+        {
+            return;
+        }
+
+        foreach (var player in ctPlayers.Skip(allowedCt))
+        {
+            _pendingTeamSwitches.Remove(player.SteamID);
+            ApplyTeamSwitch(player, CsTeam.Terrorist);
+        }
+    }
+
+    [GameEventHandler]
+    public HookResult OnRoundEnd(EventRoundEnd @event, GameEventInfo info)
+    {
+        ProcessPendingTeamSwitches();
+        EnforceCtBalanceAtRoundEnd();
+        return HookResult.Continue;
     }
 
     private void RebuildQueueWithout(ulong steamId)
